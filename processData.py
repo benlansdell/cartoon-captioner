@@ -16,6 +16,8 @@ import nltk
 from PIL import Image
 from pycocotools.coco import COCO
 
+from shutil import copyfile
+
 class Vocabulary(object):
     def __init__(self):
         self.word2idx = {}
@@ -45,7 +47,7 @@ def build_vocab(json, threshold):
         tokens = nltk.tokenize.word_tokenize(caption.lower())
         counter.update(tokens)
 
-    # ommit non-frequent words
+    # omit non-frequent words
     words = [word for word, cnt in counter.items() if cnt >= threshold]
 
     vocab = Vocabulary()
@@ -74,17 +76,60 @@ def resize_image(image):
     image = image.resize([224, 224], Image.ANTIALIAS)
     return image
 
+def process_cartoons(cartoon_path, output_path, train_prop = 0.9):
+    dirs = [a for a in os.listdir(cartoon_path) if os.path.isdir(cartoon_path +
+             '/' + a)]
+    #Split into train and val
+    n_train = int(len(dirs)*train_prop)
+    train_csv = open(f'./data/train_captions.csv', 'w')
+    val_csv = open(f'./data/val_captions.csv', 'w')
+    count = 0
+    for idx,dr in enumerate(dirs):
+        #print(f'Copying {dr}')
+        if idx < n_train: split = 'train'
+        else: split = 'val'
+        #Open captions.txt
+        if os.path.exists(f'{cartoon_path}/{dr}/{dr}_captions.txt'):
+            fn = f'{cartoon_path}/{dr}/{dr}_captions.txt'
+        elif os.path.exists(f'{cartoon_path}/{dr}/{dr}_captions.csv'):
+            fn = f'{cartoon_path}/{dr}/{dr}_captions.csv'
+        elif os.path.exists(f'{cartoon_path}/{dr}/{dr}_captions_output.csv'):
+            fn = f'{cartoon_path}/{dr}/{dr}_captions_output.csv'
+        elif os.path.exists(f'{cartoon_path}/{dr}/round1_cardinal/round1_captions.txt'):
+            fn = f'{cartoon_path}/{dr}/round1_cardinal/round1_captions.txt'
+        elif os.path.exists(f'{cartoon_path}/{dr}/round1_cardinal/captions.txt'):
+            fn = f'{cartoon_path}/{dr}/round1_cardinal/captions.txt'
+        else:
+            fn = f'{cartoon_path}/{dr}/{dr}_captions_output.txt'
+        cap_in = open(fn, 'r')
+        try:
+            for line in cap_in:
+                line = line.replace('"', '\'').rstrip()
+                caption = f'{count},{dr}.jpg,"{line}"\n'
+                if idx < n_train:
+                    train_csv.write(caption)
+                else:
+                    val_csv.write(caption)
+                count += 1
+        except UnicodeDecodeError:
+            print(f"Cannot read {fn}, skipping these captions. Unicode decode error.")
+        cap_in.close()
+
+        copyfile(f'{cartoon_path}/{dr}/{dr}.jpg', f'{output_path}_{split}/{dr}.jpg')
+    train_csv.close()
+    val_csv.close()
+
 def main(caption_path,vocab_path,threshold):
     vocab = build_vocab(json=caption_path,threshold=threshold)
     with open(vocab_path, 'wb') as f:
         pickle.dump(vocab, f)
 
-    # print("resizing images...")
+    print("Resizing images...")
     splits = ['val','train']
 
     for split in splits:
-        folder = './data/%s2014' %split
-        resized_folder = './data/%s2014_resized/' %split
+        folder = './data/nycartoons_%s' %split
+        resized_folder = './data/nycartoons_%s_resized/' %split
         if not os.path.exists(resized_folder):
             os.makedirs(resized_folder)
         image_files = os.listdir(folder)
@@ -93,12 +138,16 @@ def main(caption_path,vocab_path,threshold):
             with open(os.path.join(folder, image_file), 'r+b') as f:
                 with Image.open(f) as image:
                     image = resize_image(image)
+                    image = image.convert("RGB")
                     image.save(os.path.join(resized_folder, image_file), image.format)
+    print("Done resizing images.")
 
-    print("done resizing images...")
-
+cartoon_input_path = '/home/lansdell/projects/caption-contest-data/contests/info/'
+cartoon_output_path = './data/nycartoons'
 caption_path = './data/annotations/captions_train2014.json'
 vocab_path = './data/vocab.pkl'
 threshold = 5
 
-# main(caption_path,vocab_path,threshold)
+if __name__ == "__main__":
+    process_cartoons(cartoon_input_path, cartoon_output_path)
+    main(caption_path,vocab_path,threshold)

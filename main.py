@@ -1,3 +1,6 @@
+#!/usr/bin/env python
+# coding: utf-8
+
 '''
 Parts of this code were incorporated from the following github repositories:
 1. parksunwoo/show_attend_and_tell_pytorch
@@ -10,7 +13,8 @@ This script has the Encoder and Decoder models and training/validation scripts.
 Edit the parameters sections of this file to specify which models to load/run
 ''' 
 
-# coding: utf-8
+import os
+os.environ["CUDA_VISIBLE_DEVICES"]="0"
 
 import pickle
 import torch.nn as nn
@@ -50,7 +54,7 @@ UNK = 3
 # hyperparams
 grad_clip = 5.
 num_epochs = 4
-batch_size = 32 
+batch_size = 16 
 decoder_lr = 0.0004
 
 # if both are false them model = baseline
@@ -58,9 +62,13 @@ decoder_lr = 0.0004
 glove_model = False
 bert_model = False
 
+if bert_model: model_tag = 'bert'
+elif glove_model: model_tag = 'glove'
+else: model_tag = 'baseline'
+
 from_checkpoint = False
 train_model = True
-valid_model = False
+valid_model = True
 
 # loss
 class loss_obj(object):
@@ -74,6 +82,28 @@ class loss_obj(object):
         self.count += n
         self.avg = self.sum / self.count
 
+def get_loss(imgs, caps, caplens):
+    scores, caps_sorted, decode_lengths, alphas = decoder(imgs, caps, caplens)
+    scores = pack_padded_sequence(scores, decode_lengths, batch_first=True)[0]
+    targets = caps_sorted[:, 1:]
+    targets = pack_padded_sequence(targets, decode_lengths, batch_first=True)[0]
+    loss = criterion(scores, targets).to(device) + ((1. - alphas.sum(dim=1)) ** 2).mean()
+    return loss, decode_lengths
+
+def save_model(tag, epoch, encoder, decoder, loss):
+    torch.save({
+        'epoch': epoch,
+        'model_state_dict': decoder.state_dict(),
+        'optimizer_state_dict': decoder_optimizer.state_dict(),
+        'loss': loss,
+        }, f'./checkpoints/decoder_{tag}')
+
+    torch.save({
+        'epoch': epoch,
+        'model_state_dict': encoder.state_dict(),
+        'loss': loss,
+        }, f'./checkpoints/encoder_{tag}')
+
 # Device configuration
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -85,8 +115,11 @@ BertModel = BertModel.from_pretrained('bert-base-uncased').to(device)
 BertModel.eval()
 
 # Load GloVe
-glove_vectors = pickle.load(open('glove.6B/glove_words.pkl', 'rb'))
-glove_vectors = torch.tensor(glove_vectors)
+if glove_model:
+    glove_vectors = pickle.load(open('glove.6B/glove_words.pkl', 'rb'))
+    glove_vectors = torch.tensor(glove_vectors)
+else:
+    glove_vectors = None
 
 # Load vocabulary
 with open('data/vocab.pkl', 'rb') as f:
@@ -108,34 +141,29 @@ if from_checkpoint:
     decoder = Decoder(vocab_size=len(vocab),
                         use_glove=glove_model, 
                         use_bert=bert_model, 
-                        device = device).to(device)
+                        device = device,
+                        tokenizer = tokenizer,
+                        vocab = vocab,
+                        glove_vectors = glove_vectors).to(device)
 
     if torch.cuda.is_available():
+        encoder_checkpoint = torch.load(f'./checkpoints/encoder_{model_tag}')
+        decoder_checkpoint = torch.load(f'./checkpoints/decoder_{model_tag}')
         if bert_model:
             print('Pre-Trained BERT Model')
-            encoder_checkpoint = torch.load('./checkpoints/encoder_bert')
-            decoder_checkpoint = torch.load('./checkpoints/decoder_bert')
         elif glove_model:
             print('Pre-Trained GloVe Model')
-            encoder_checkpoint = torch.load('./checkpoints/encoder_glove')
-            decoder_checkpoint = torch.load('./checkpoints/decoder_glove')
         else:
             print('Pre-Trained Baseline Model')
-            encoder_checkpoint = torch.load('./checkpoints/encoder_baseline')
-            decoder_checkpoint = torch.load('./checkpoints/decoder_baseline')
     else:
+        encoder_checkpoint = torch.load(f'./checkpoints/encoder_{model_tag}', map_location='cpu')
+        decoder_checkpoint = torch.load(f'./checkpoints/decoder_{model_tag}', map_location='cpu')
         if bert_model:
             print('Pre-Trained BERT Model')
-            encoder_checkpoint = torch.load('./checkpoints/encoder_bert', map_location='cpu')
-            decoder_checkpoint = torch.load('./checkpoints/decoder_bert', map_location='cpu')
         elif glove_model:
             print('Pre-Trained GloVe Model')
-            encoder_checkpoint = torch.load('./checkpoints/encoder_glove', map_location='cpu')
-            decoder_checkpoint = torch.load('./checkpoints/decoder_glove', map_location='cpu')
         else:
             print('Pre-Trained Baseline Model')
-            encoder_checkpoint = torch.load('./checkpoints/encoder_baseline', map_location='cpu')
-            decoder_checkpoint = torch.load('./checkpoints/decoder_baseline', map_location='cpu')
 
     encoder.load_state_dict(encoder_checkpoint['model_state_dict'])
     decoder_optimizer = torch.optim.Adam(params=decoder.parameters(),lr=decoder_lr)
@@ -145,8 +173,11 @@ else:
     encoder = Encoder().to(device)
     decoder = Decoder(vocab_size=len(vocab),
                         use_glove=glove_model, 
-                        use_bert=bert_model,
-                        device=device).to(device)
+                        use_bert=bert_model, 
+                        device = device,
+                        tokenizer = tokenizer,
+                        vocab = vocab,
+                        glove_vectors = glove_vectors).to(device)
     decoder_optimizer = torch.optim.Adam(params=decoder.parameters(),lr=decoder_lr)
 
 ###############
@@ -164,18 +195,15 @@ def train():
 
         for i, (imgs, caps, caplens) in enumerate(tqdm(train_loader)):
 
+            #Replace the very first batch with the longest string
+            #if i == 0:
+            #    caps[0] = torch.zeros(0)
+            #    caplens[0] = 56
+
             imgs = encoder(imgs.to(device))
             caps = caps.to(device)
 
-            scores, caps_sorted, decode_lengths, alphas = decoder(imgs, caps, caplens)
-            scores = pack_padded_sequence(scores, decode_lengths, batch_first=True)[0]
-
-            targets = caps_sorted[:, 1:]
-            targets = pack_padded_sequence(targets, decode_lengths, batch_first=True)[0]
-
-            loss = criterion(scores, targets).to(device)
-
-            loss += ((1. - alphas.sum(dim=1)) ** 2).mean()
+            loss, decode_lengths = get_loss(imgs, caps, caplens)
 
             decoder_optimizer.zero_grad()
             loss.backward()
@@ -199,37 +227,16 @@ def train():
                     param_group['lr'] = param_group['lr'] * 0.8
 
                 print('saving model...')
-
-                torch.save({
-                    'epoch': epoch,
-                    'model_state_dict': decoder.state_dict(),
-                    'optimizer_state_dict': decoder_optimizer.state_dict(),
-                    'loss': loss,
-                    }, './checkpoints/decoder_mid')
-
-                torch.save({
-                    'epoch': epoch,
-                    'model_state_dict': encoder.state_dict(),
-                    'loss': loss,
-                    }, './checkpoints/encode_mid')
-
+                save_model('mid', epoch, encoder, decoder, loss)
                 print('model saved')
 
-        torch.save({
-            'epoch': epoch,
-            'model_state_dict': decoder.state_dict(),
-            'optimizer_state_dict': decoder_optimizer.state_dict(),
-            'loss': loss,
-            }, './checkpoints/decoder_epoch'+str(epoch+1))
+            #Attempt for better memory management...
+            #del scores, caps_sorted, alphas, targets
 
-        torch.save({
-            'epoch': epoch,
-            'model_state_dict': encoder.state_dict(),
-            'loss': loss,
-            }, './checkpoints/encoder_epoch'+str(epoch+1))
-
+        save_model('epoch'+str(epoch+1), epoch, encoder, decoder, loss)
         print('epoch checkpoint saved')
 
+    save_model(model_tag, epoch, encoder, decoder, loss)
     print("Completed training...")  
 
 #################
@@ -354,8 +361,15 @@ def validate():
 # Run training/validation
 ######################
 
-if train_model:
-    train()
+def main():
 
-if valid_model:
-    validate()
+    #Argument parsing...
+
+    if train_model:
+        train()
+
+    if valid_model:
+        validate()
+
+if __name__ == "__main__":
+    main()

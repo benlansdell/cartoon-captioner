@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 '''
 This code is mainly taken from the following github repositories:
 1.  parksunwoo/show_attend_and_tell_pytorch
@@ -17,6 +18,19 @@ from PIL import Image
 from pycocotools.coco import COCO
 
 from shutil import copyfile
+import pandas as pd
+import string 
+
+def tokenize_caption(caption):
+    #print(caption)
+    #Just ASCII
+    encoded_string = caption.encode("ascii", "ignore")
+    caption = encoded_string.decode()
+    #Remove most punctuation
+    caption = caption.translate(str.maketrans('', '', string.punctuation))
+    #Tokenize and make lower case
+    tokens = nltk.tokenize.word_tokenize(str(caption).lower())
+    return tokens
 
 class Vocabulary(object):
     def __init__(self):
@@ -37,6 +51,33 @@ class Vocabulary(object):
 
     def __len__(self):
         return len(self.word2idx)
+
+def build_caption_vocab(csvs, threshold):
+    counter = Counter()
+    for csv in csvs:
+        df = pd.read_csv(csv, header = None, 
+                            names = ['idx', 'file', 'caption'],
+                            index_col = 'idx')
+        captions = df['caption']
+        for caption in captions:
+            if type(caption) is not str: continue
+            #print(caption)
+            tokens = tokenize_caption(caption)
+            #print(tokens)
+            counter.update(tokens)
+
+    # omit non-frequent words
+    words = [word for word, cnt in counter.items() if cnt >= threshold]
+
+    vocab = Vocabulary()
+    vocab.add_word('<pad>') # 0
+    vocab.add_word('<start>') # 1
+    vocab.add_word('<end>') # 2
+    vocab.add_word('<unk>') # 3
+
+    for i, word in enumerate(words):
+        vocab.add_word(word)
+    return vocab
 
 def build_vocab(json, threshold):
     coco = COCO(json)
@@ -76,7 +117,8 @@ def resize_image(image):
     image = image.resize([224, 224], Image.ANTIALIAS)
     return image
 
-def process_cartoons(cartoon_path, output_path, train_prop = 0.9):
+def process_cartoons(cartoon_path, output_path, train_prop = 0.9, max_words = 30,
+                     max_chars = 300):
     dirs = [a for a in os.listdir(cartoon_path) if os.path.isdir(cartoon_path +
              '/' + a)]
     #Split into train and val
@@ -105,6 +147,14 @@ def process_cartoons(cartoon_path, output_path, train_prop = 0.9):
         try:
             for line in cap_in:
                 line = line.replace('"', '\'').rstrip()
+                #Remove really long lines, or lines with too many words...
+                if type(line) is not str: continue
+                encoded_string = line.encode("ascii", "ignore")
+                line = encoded_string.decode()
+                if len(line) > max_chars: continue
+                tokens = tokenize_caption(line)
+                if len(tokens) > max_words: continue
+                if len(tokens) == 0: continue
                 caption = f'{count},{dr}.jpg,"{line}"\n'
                 if idx < n_train:
                     train_csv.write(caption)
@@ -119,8 +169,8 @@ def process_cartoons(cartoon_path, output_path, train_prop = 0.9):
     train_csv.close()
     val_csv.close()
 
-def main(caption_path,vocab_path,threshold):
-    vocab = build_vocab(json=caption_path,threshold=threshold)
+def main(csvs,vocab_path,threshold):
+    vocab = build_caption_vocab(csvs=csvs, threshold=threshold)
     with open(vocab_path, 'wb') as f:
         pickle.dump(vocab, f)
 
@@ -144,10 +194,11 @@ def main(caption_path,vocab_path,threshold):
 
 cartoon_input_path = '/home/lansdell/projects/caption-contest-data/contests/info/'
 cartoon_output_path = './data/nycartoons'
-caption_path = './data/annotations/captions_train2014.json'
+csvs = ['./data/train_captions.csv','./data/val_captions.csv']
+#caption_path = './data/annotations/captions_train2014.json'
 vocab_path = './data/vocab.pkl'
 threshold = 5
 
 if __name__ == "__main__":
     process_cartoons(cartoon_input_path, cartoon_output_path)
-    main(caption_path,vocab_path,threshold)
+    main(csvs,vocab_path,threshold)

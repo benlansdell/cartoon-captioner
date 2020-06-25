@@ -20,6 +20,17 @@ from torchtext.vocab import Vectors, GloVe
 from scipy import misc
 from pytorch_pretrained_bert import BertTokenizer, BertModel
 import imageio
+import pickle 
+
+# vocab indices
+PAD = 0
+START = 1
+END = 2
+UNK = 3
+
+# Load vocabulary
+with open('data/vocab.pkl', 'rb') as f:
+    vocab = pickle.load(f)
 
 #####################
 # Encoder RESNET CNN
@@ -42,13 +53,17 @@ class Encoder(nn.Module):
 ####################
 class Decoder(nn.Module):
 
-    def __init__(self, vocab_size, use_glove, use_bert, device):
+    def __init__(self, vocab_size, use_glove, use_bert, device, tokenizer,vocab,glove_vectors = None):
 
         super(Decoder, self).__init__()
 
+        self.tokenizer = tokenizer
         self.device = device
+        self.glove_vectors = glove_vectors
+        self.vocab = vocab
         self.encoder_dim = 2048
-        self.attention_dim = 512
+        #self.attention_dim = 512
+        self.attention_dim = 256
         self.use_bert = use_bert
 
         if use_glove:
@@ -58,14 +73,15 @@ class Decoder(nn.Module):
         else:
             self.embed_dim = 512
 
-        self.decoder_dim = 512
+        self.decoder_dim = 256
         self.vocab_size = vocab_size
+        print(f"Initializing with vocab of size: {vocab_size} words")
         self.dropout = 0.5
         
         # soft attention
-        self.enc_att = nn.Linear(2048, 512)
-        self.dec_att = nn.Linear(512, 512)
-        self.att = nn.Linear(512, 1)
+        self.enc_att = nn.Linear(self.encoder_dim, self.decoder_dim)
+        self.dec_att = nn.Linear(self.decoder_dim, self.attention_dim)
+        self.att = nn.Linear(self.attention_dim, 1)
         self.relu = nn.ReLU()
         self.softmax = nn.Softmax(dim=1)
 
@@ -88,7 +104,7 @@ class Decoder(nn.Module):
 
             # load Glove embeddings
             if use_glove:
-                self.embedding.weight = nn.Parameter(glove_vectors)
+                self.embedding.weight = nn.Parameter(self.glove_vectors)
 
             # always fine-tune embeddings (even with GloVe)
             for p in self.embedding.parameters():
@@ -115,11 +131,11 @@ class Decoder(nn.Module):
                 while len(cap_idx) < max_dec_len:
                     cap_idx.append(PAD)
                     
-                cap = ' '.join([vocab.idx2word[word_idx.item()] for word_idx in cap_idx])
+                cap = ' '.join([self.vocab.idx2word[word_idx.item()] for word_idx in cap_idx])
                 cap = u'[CLS] '+cap
                 
-                tokenized_cap = tokenizer.tokenize(cap)                
-                indexed_tokens = tokenizer.convert_tokens_to_ids(tokenized_cap)
+                tokenized_cap = self.tokenizer.tokenize(cap)                
+                indexed_tokens = self.tokenizer.convert_tokens_to_ids(tokenized_cap)
                 tokens_tensor = torch.tensor([indexed_tokens]).to(self.device)
 
                 with torch.no_grad():

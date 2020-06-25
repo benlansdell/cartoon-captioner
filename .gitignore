@@ -1,5 +1,6 @@
 data/
 .vscode/
+checkpoints/
 glove.6B/
 *.zip
 *.pyc

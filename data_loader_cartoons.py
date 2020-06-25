@@ -18,7 +18,8 @@ from pycocotools.coco import COCO
 from torchvision import transforms
 import pandas as pd
 import pickle 
-from processData import Vocabulary
+from processData import Vocabulary, tokenize_caption
+import string 
 
 class DataLoader(data.Dataset):
     def __init__(self, root, csv, vocab, transform=None):
@@ -26,6 +27,10 @@ class DataLoader(data.Dataset):
         self.root = root
         df = pd.read_csv(csv, header = None, names = ['idx', 'file', 'caption'],
                             index_col = 'idx')
+        #Drop everything with nan...
+        df.dropna(inplace = True)
+        df.reset_index(inplace = True)
+        self.max_length = 100
         self.data_dict = df.to_dict('index')
         self.vocab = vocab
         self.transform = transform
@@ -38,7 +43,8 @@ class DataLoader(data.Dataset):
         if self.transform is not None:
             image = self.transform(image)
 
-        tokens = nltk.tokenize.word_tokenize(str(caption).lower())
+        #print(caption, type(caption), index)
+        tokens = tokenize_caption(caption)
         caption = []
         caption.append(vocab('<start>'))
         caption.extend([vocab(token) for token in tokens])
@@ -49,14 +55,15 @@ class DataLoader(data.Dataset):
     def __len__(self):
         return len(self.data_dict)
 
-def collate_fn(data):
+def collate_fn(data, max_length):
     data.sort(key=lambda  x: len(x[1]), reverse=True)
     images, captions = zip(*data)
 
     images = torch.stack(images, 0)
 
     lengths = [len(cap) for cap in captions]
-    targets = torch.zeros(len(captions), max(lengths)).long()
+    #targets = torch.zeros(len(captions), max(lengths)).long()
+    targets = torch.zeros(len(captions), max_length).long()
     for i, cap in enumerate(captions):
         end = lengths[i]
         targets[i, :end] = cap[:end]
@@ -86,12 +93,12 @@ def get_loader(method, vocab, batch_size):
                                               batch_size=batch_size,
                                               shuffle=True,
                                               num_workers=1,
-                                              collate_fn=collate_fn)
+                                              collate_fn=lambda data: collate_fn(data, nycc.max_length))
     return data_loader
 
 #Test dataloader
 #BS = 64
 #with open('data/vocab.pkl', 'rb') as f:
-#    vocab = pickle.load(f)
-#loader = get_loader('train', vocab, BS)
+#   vocab = pickle.load(f)
+#loader = get_loader('val', vocab, BS)
 #images, captions, lengths = next(iter(loader))

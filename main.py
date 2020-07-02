@@ -13,9 +13,20 @@ This script has the Encoder and Decoder models and training/validation scripts.
 Edit the parameters sections of this file to specify which models to load/run
 ''' 
 
+#TODO
+# * Increase word embedding dim/attention dim
+# * Check tokenizer working well
+
+#DONE
+# * Shrink vocab a bit to make it easier... make each word require at least... 
+#   10 occurrances to be added...?
+# * Remove multi-sentence captions, add commas
+
+
 import os
 os.environ["CUDA_VISIBLE_DEVICES"]="0"
 
+import argparse
 import pickle
 import torch.nn as nn
 import torch
@@ -46,29 +57,6 @@ PAD = 0
 START = 1
 END = 2
 UNK = 3
-
-##############
-# Parameters #
-##############
-
-# hyperparams
-grad_clip = 5.
-num_epochs = 4
-batch_size = 16 
-decoder_lr = 0.0004
-
-# if both are false them model = baseline
-
-glove_model = False
-bert_model = False
-
-if bert_model: model_tag = 'bert'
-elif glove_model: model_tag = 'glove'
-else: model_tag = 'baseline'
-
-from_checkpoint = False
-train_model = True
-valid_model = True
 
 # loss
 class loss_obj(object):
@@ -103,82 +91,6 @@ def save_model(tag, epoch, encoder, decoder, loss):
         'model_state_dict': encoder.state_dict(),
         'loss': loss,
         }, f'./checkpoints/encoder_{tag}')
-
-# Device configuration
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
-# Load pre-trained model tokenizer (vocabulary)
-tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
-
-# Load pre-trained model (weights)
-BertModel = BertModel.from_pretrained('bert-base-uncased').to(device)
-BertModel.eval()
-
-# Load GloVe
-if glove_model:
-    glove_vectors = pickle.load(open('glove.6B/glove_words.pkl', 'rb'))
-    glove_vectors = torch.tensor(glove_vectors)
-else:
-    glove_vectors = None
-
-# Load vocabulary
-with open('data/vocab.pkl', 'rb') as f:
-    vocab = pickle.load(f)
-
-# load data
-train_loader = get_loader('train', vocab, batch_size)
-val_loader = get_loader('val', vocab, batch_size)
-
-#############
-# Init model
-#############
-
-criterion = nn.CrossEntropyLoss().to(device)
-
-if from_checkpoint:
-
-    encoder = Encoder().to(device)
-    decoder = Decoder(vocab_size=len(vocab),
-                        use_glove=glove_model, 
-                        use_bert=bert_model, 
-                        device = device,
-                        tokenizer = tokenizer,
-                        vocab = vocab,
-                        glove_vectors = glove_vectors).to(device)
-
-    if torch.cuda.is_available():
-        encoder_checkpoint = torch.load(f'./checkpoints/encoder_{model_tag}')
-        decoder_checkpoint = torch.load(f'./checkpoints/decoder_{model_tag}')
-        if bert_model:
-            print('Pre-Trained BERT Model')
-        elif glove_model:
-            print('Pre-Trained GloVe Model')
-        else:
-            print('Pre-Trained Baseline Model')
-    else:
-        encoder_checkpoint = torch.load(f'./checkpoints/encoder_{model_tag}', map_location='cpu')
-        decoder_checkpoint = torch.load(f'./checkpoints/decoder_{model_tag}', map_location='cpu')
-        if bert_model:
-            print('Pre-Trained BERT Model')
-        elif glove_model:
-            print('Pre-Trained GloVe Model')
-        else:
-            print('Pre-Trained Baseline Model')
-
-    encoder.load_state_dict(encoder_checkpoint['model_state_dict'])
-    decoder_optimizer = torch.optim.Adam(params=decoder.parameters(),lr=decoder_lr)
-    decoder.load_state_dict(decoder_checkpoint['model_state_dict'])
-    decoder_optimizer.load_state_dict(decoder_checkpoint['optimizer_state_dict'])
-else:
-    encoder = Encoder().to(device)
-    decoder = Decoder(vocab_size=len(vocab),
-                        use_glove=glove_model, 
-                        use_bert=bert_model, 
-                        device = device,
-                        tokenizer = tokenizer,
-                        vocab = vocab,
-                        glove_vectors = glove_vectors).to(device)
-    decoder_optimizer = torch.optim.Adam(params=decoder.parameters(),lr=decoder_lr)
 
 ###############
 # Train model #
@@ -357,19 +269,131 @@ def validate():
     print("Completed validation...")
     print_sample(hypotheses, references, test_references, all_imgs, all_alphas,1,False, losses)
 
+##############
+# Parameters #
+##############
+
+parser = argparse.ArgumentParser(description='')
+parser.add_argument('model', default = 'baseline',
+                            help = "Do not test on simulated data.")
+parser.add_argument('--no-train', dest='no_sim', action = 'store_true',
+                            help = "Do not test on simulated data.")
+parser.add_argument('--no-real', dest='no_real', action = 'store_true',
+                            help = "Do not test on real data.")
+
+args = parser.parse_args()
+
+valid_models = ['bert', 'glove', 'baseline']
+
+# hyperparams
+grad_clip = 5.
+num_epochs = 6
+batch_size = 16 
+decoder_lr = 0.0004
+
+glove_model = False
+bert_model = False
+
+str_models = ' '.join(valid_models)
+assert args.model in valid_models, f'Model name not valid, choose one of {str_models}'
+
+if args.model == 'bert':
+    bert_model = True 
+elif args.model == 'glove':
+    glove_model = True 
+    
+model_tag = args.model 
+
+from_checkpoint = False
+train_model = True
+valid_model = True
+
+# Device configuration
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+# Load pre-trained model tokenizer (vocabulary)
+tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+
+# Load pre-trained model (weights)
+BertModel = BertModel.from_pretrained('bert-base-uncased').to(device)
+BertModel.eval()
+
+# Load GloVe
+if glove_model:
+    glove_vectors = pickle.load(open('glove.6B/glove_words.pkl', 'rb'))
+    glove_vectors = torch.tensor(glove_vectors)
+else:
+    glove_vectors = None
+
+# Load vocabulary
+with open('data/vocab.pkl', 'rb') as f:
+    vocab = pickle.load(f)
+
+# load data
+train_loader = get_loader('train', vocab, batch_size)
+val_loader = get_loader('val', vocab, batch_size)
+
+#############
+# Init model
+#############
+
+criterion = nn.CrossEntropyLoss().to(device)
+
+if from_checkpoint:
+
+    encoder = Encoder().to(device)
+    decoder = Decoder(vocab_size=len(vocab),
+                        use_glove=glove_model, 
+                        use_bert=bert_model, 
+                        device = device,
+                        tokenizer = tokenizer,
+                        vocab = vocab,
+                        bert_model = BertModel, 
+                        glove_vectors = glove_vectors).to(device)
+
+    if torch.cuda.is_available():
+        encoder_checkpoint = torch.load(f'./checkpoints/encoder_{model_tag}')
+        decoder_checkpoint = torch.load(f'./checkpoints/decoder_{model_tag}')
+        if bert_model:
+            print('Pre-Trained BERT Model')
+        elif glove_model:
+            print('Pre-Trained GloVe Model')
+        else:
+            print('Pre-Trained Baseline Model')
+    else:
+        encoder_checkpoint = torch.load(f'./checkpoints/encoder_{model_tag}', map_location='cpu')
+        decoder_checkpoint = torch.load(f'./checkpoints/decoder_{model_tag}', map_location='cpu')
+        if bert_model:
+            print('Pre-Trained BERT Model')
+        elif glove_model:
+            print('Pre-Trained GloVe Model')
+        else:
+            print('Pre-Trained Baseline Model')
+
+    encoder.load_state_dict(encoder_checkpoint['model_state_dict'])
+    decoder_optimizer = torch.optim.Adam(params=decoder.parameters(),lr=decoder_lr)
+    decoder.load_state_dict(decoder_checkpoint['model_state_dict'])
+    decoder_optimizer.load_state_dict(decoder_checkpoint['optimizer_state_dict'])
+else:
+    encoder = Encoder().to(device)
+    decoder = Decoder(vocab_size=len(vocab),
+                        use_glove=glove_model, 
+                        use_bert=bert_model, 
+                        device = device,
+                        tokenizer = tokenizer,
+                        vocab = vocab,
+                        bert_model = BertModel,
+                        glove_vectors = glove_vectors).to(device)
+    decoder_optimizer = torch.optim.Adam(params=decoder.parameters(),lr=decoder_lr)
+
 ######################
 # Run training/validation
 ######################
 
-def main():
+if train_model:
+    print(f"Training {args.model}")
+    train()
 
-    #Argument parsing...
-
-    if train_model:
-        train()
-
-    if valid_model:
-        validate()
-
-if __name__ == "__main__":
-    main()
+if valid_model:
+    print(f"Validating {args.model}")
+    validate()

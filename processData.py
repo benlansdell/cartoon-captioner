@@ -23,11 +23,15 @@ import string
 
 def tokenize_caption(caption):
     #print(caption)
+    excluded_chars = string.punctuation
+    excluded_chars = excluded_chars.replace('.', '')
+    excluded_chars = excluded_chars.replace(',', '')
+    excluded_chars = excluded_chars.replace('\'', '')
     #Just ASCII
     encoded_string = caption.encode("ascii", "ignore")
     caption = encoded_string.decode()
     #Remove most punctuation
-    caption = caption.translate(str.maketrans('', '', string.punctuation))
+    caption = caption.translate(str.maketrans('', '', excluded_chars))
     #Tokenize and make lower case
     tokens = nltk.tokenize.word_tokenize(str(caption).lower())
     return tokens
@@ -48,6 +52,10 @@ class Vocabulary(object):
         if not word in self.word2idx:
             return self.word2idx['<unk>']
         return self.word2idx[word]
+
+    def translate(self, tokens):
+        sentence = [self.idx2word[t] for t in tokens]
+        return sentence
 
     def __len__(self):
         return len(self.word2idx)
@@ -152,6 +160,7 @@ def process_cartoons(cartoon_path, output_path, train_prop = 0.9, max_words = 30
                 encoded_string = line.encode("ascii", "ignore")
                 line = encoded_string.decode()
                 if len(line) > max_chars: continue
+                if line.count('.') > 1: continue
                 tokens = tokenize_caption(line)
                 if len(tokens) > max_words: continue
                 if len(tokens) == 0: continue
@@ -197,7 +206,7 @@ cartoon_output_path = './data/nycartoons'
 csvs = ['./data/train_captions.csv','./data/val_captions.csv']
 #caption_path = './data/annotations/captions_train2014.json'
 vocab_path = './data/vocab.pkl'
-threshold = 5
+threshold = 10
 
 if __name__ == "__main__":
     process_cartoons(cartoon_input_path, cartoon_output_path)

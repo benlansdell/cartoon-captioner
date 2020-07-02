@@ -53,7 +53,8 @@ class Encoder(nn.Module):
 ####################
 class Decoder(nn.Module):
 
-    def __init__(self, vocab_size, use_glove, use_bert, device, tokenizer,vocab,glove_vectors = None):
+    def __init__(self, vocab_size, use_glove, use_bert, device, tokenizer,vocab,
+                    bert_model, glove_vectors = None):
 
         super(Decoder, self).__init__()
 
@@ -61,9 +62,10 @@ class Decoder(nn.Module):
         self.device = device
         self.glove_vectors = glove_vectors
         self.vocab = vocab
+        self.BertModel = bert_model
         self.encoder_dim = 2048
-        #self.attention_dim = 512
-        self.attention_dim = 256
+        self.attention_dim = 512
+        #self.attention_dim = 256
         self.use_bert = use_bert
 
         if use_glove:
@@ -73,7 +75,7 @@ class Decoder(nn.Module):
         else:
             self.embed_dim = 512
 
-        self.decoder_dim = 256
+        self.decoder_dim = 512
         self.vocab_size = vocab_size
         print(f"Initializing with vocab of size: {vocab_size} words")
         self.dropout = 0.5
@@ -139,7 +141,7 @@ class Decoder(nn.Module):
                 tokens_tensor = torch.tensor([indexed_tokens]).to(self.device)
 
                 with torch.no_grad():
-                    encoded_layers, _ = BertModel(tokens_tensor)
+                    encoded_layers, _ = self.BertModel(tokens_tensor)
 
                 bert_embedding = encoded_layers[11].squeeze(0)
                 

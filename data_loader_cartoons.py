@@ -1,14 +1,3 @@
-'''
-This code is mainly taken from the following github repositories:
-1.  parksunwoo/show_attend_and_tell_pytorch
-Link: https://github.com/parksunwoo/show_attend_and_tell_pytorch/blob/master/prepro.py
-
-2. sgrvinod/a-PyTorch-Tutorial-to-Image-Captioning
-Link: https://github.com/sgrvinod/a-PyTorch-Tutorial-to-Image-Captioning
-
-This script loads the COCO dataset in batches to be used for training/testing
-''' 
-
 import os
 import nltk
 import torch
@@ -102,3 +91,6 @@ def get_loader(method, vocab, batch_size):
 #   vocab = pickle.load(f)
 #loader = get_loader('val', vocab, BS)
 #images, captions, lengths = next(iter(loader))
+
+#Convert from tokens to captions
+#print(vocab.translate(captions[0].numpy()))
